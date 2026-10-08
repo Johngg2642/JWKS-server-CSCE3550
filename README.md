@@ -91,7 +91,7 @@ mock authentication, SQL injection input, and unsupported methods.
 `pyproject.toml` enables line/branch coverage for both modules and enforces a
 minimum of 81%, above the assignment's 80% requirement.
 
-## Project 2 blackbox client
+## Blackbox client
 
 Download and extract the appropriate binary from the
 [official releases](https://github.com/jh125486/CSCE3550/releases).
@@ -114,9 +114,9 @@ The generated database stays in this directory so the client can inspect it.
 - `pyproject.toml`: pytest, coverage, and lint settings.
 - `screenshot.png`: historical Project 1 grading evidence.
 
-## Project 2 grading evidence
+## Test results
 
-The October 8, 2026 run scored **98.93%** and was successfully submitted to the
-grading server. The screenshot includes the results table and upload confirmation.
+The run scored **98.93%** and was successfully submitted to the
+grading server. The screenshot includes the results table.
 
 ![Project 2 gradebot results and successful submission](project2-results.png)
