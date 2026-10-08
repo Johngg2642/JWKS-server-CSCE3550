@@ -112,7 +112,7 @@ The generated database stays in this directory so the client can inspect it.
 - `tests/test_app.py`: automated regression tests.
 - `requirements.txt`: runtime and development dependencies.
 - `pyproject.toml`: pytest, coverage, and lint settings.
-- `screenshot.png`: historical Project 1 grading evidence.
+- `screenshot.png`: project grading evidence.
 
 ## Test results
 
