@@ -113,3 +113,10 @@ The generated database stays in this directory so the client can inspect it.
 - `requirements.txt`: runtime and development dependencies.
 - `pyproject.toml`: pytest, coverage, and lint settings.
 - `screenshot.png`: historical Project 1 grading evidence.
+
+## Project 2 grading evidence
+
+The October 8, 2026 run scored **98.93%** and was successfully submitted to the
+grading server. The screenshot includes the results table and upload confirmation.
+
+![Project 2 gradebot results and successful submission](project2-results.png)
