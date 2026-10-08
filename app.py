@@ -1,108 +1,90 @@
+"""Mock authentication and JWKS endpoints backed by persistent SQLite keys."""
+
 import base64
 import time
-import uuid
+from contextlib import closing
 
 import jwt
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 
-app = Flask(__name__)
-
-# In-memory key storage
-keys = []
-
-
-def generate_key_pair(expired=False):
-    """Generates an RSA key pair and stores it in memory."""
-    private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-    )
-    kid = str(uuid.uuid4())
-    # 1 hour expiration for valid, or expired 1 hour ago
-    exp_offset = -3600 if expired else 3600
-    exp = int(time.time()) + exp_offset
-
-    keys.append({"kid": kid, "private_key": private_key, "exp": exp})
+from storage import (
+    DATABASE_NAME,
+    connect,
+    generate_key_pair,
+    initialize_database,
+    select_key,
+)
 
 
-def int_to_base64url(i: int) -> str:
-    """Convert an integer to a Base64URL-encoded string."""
-    length = (i.bit_length() + 7) // 8
-    b = i.to_bytes(length, byteorder="big")
-    return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
+def int_to_base64url(value: int) -> str:
+    """Encode an RSA public integer as unpadded Base64URL."""
+    data = value.to_bytes((value.bit_length() + 7) // 8, byteorder="big")
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
-@app.route("/.well-known/jwks.json", methods=["GET"])
-def jwks():
-    """Returns unexpired keys in JWKS format."""
-    jwks_keys = []
-    current_time = int(time.time())
+def create_app(database=DATABASE_NAME):
+    """Create the service using a database in the current working directory."""
+    app = Flask(__name__)
+    app.config["DATABASE"] = str(database)
+    initialize_database(app.config["DATABASE"])
 
-    for key_data in keys:
-        if key_data["exp"] > current_time:
-            # Active key, add to JWKS
-            private_key = key_data["private_key"]
-            public_key = private_key.public_key()
-            public_numbers = public_key.public_numbers()
-
-            jwks_keys.append(
+    @app.get("/.well-known/jwks.json")
+    def jwks():
+        """Publish every unexpired key's public components, never private PEM."""
+        with closing(connect(app.config["DATABASE"])) as connection:
+            rows = connection.execute(
+                "SELECT kid, key, exp FROM keys WHERE exp > ? ORDER BY kid",
+                (int(time.time()),),
+            ).fetchall()
+        public_keys = []
+        for row in rows:
+            private_key = serialization.load_pem_private_key(row["key"], password=None)
+            numbers = private_key.public_key().public_numbers()
+            public_keys.append(
                 {
                     "alg": "RS256",
                     "kty": "RSA",
                     "use": "sig",
-                    "kid": key_data["kid"],
-                    "n": int_to_base64url(public_numbers.n),
-                    "e": int_to_base64url(public_numbers.e),
+                    "kid": str(row["kid"]),
+                    "n": int_to_base64url(numbers.n),
+                    "e": int_to_base64url(numbers.e),
                 }
             )
+        return jsonify({"keys": public_keys})
 
-    return jsonify({"keys": jwks_keys})
+    @app.post("/auth")
+    def auth():
+        """Mock Basic/JSON authentication and sign with a key read from SQLite."""
+        expired = "expired" in request.args
+        now = int(time.time())
+        with closing(connect(app.config["DATABASE"])) as connection, connection:
+            # Serialize selection/renewal so concurrent requests share a new key.
+            connection.execute("BEGIN IMMEDIATE")
+            row = select_key(connection, expired, now)
+            if row is None:
+                kid = generate_key_pair(connection, expired)
+                row = connection.execute(
+                    "SELECT kid, key, exp FROM keys WHERE kid = ?", (kid,)
+                ).fetchone()
+        username = "user123"
+        if request.authorization and request.authorization.type == "basic":
+            username = request.authorization.username or username
+        elif request.is_json:
+            body = request.get_json(silent=True)
+            if isinstance(body, dict) and isinstance(body.get("username"), str):
+                username = body["username"] or username
+        private_key = serialization.load_pem_private_key(row["key"], password=None)
+        token = jwt.encode(
+            {"exp": row["exp"], "iat": now, "iss": "jwks-server", "sub": username},
+            private_key,
+            algorithm="RS256",
+            headers={"kid": str(row["kid"])},
+        )
+        return Response(token, mimetype="text/plain")
 
+    return app
 
-@app.route("/auth", methods=["POST"])
-def auth():
-    """Issues a signed JWT. Supports an ?expired=true parameter."""
-    expired = request.args.get("expired", "false").lower() == "true"
-
-    key_to_use = None
-    current_time = int(time.time())
-
-    for key_data in keys:
-        is_expired = key_data["exp"] <= current_time
-        if is_expired == expired:
-            key_to_use = key_data
-            break
-
-    if not key_to_use:
-        # Generate one on the fly if we don't have a matching one
-        generate_key_pair(expired=expired)
-        key_to_use = keys[-1]
-
-    payload = {
-        "exp": key_to_use["exp"],
-        "iat": current_time,
-        "iss": "jwks-server",
-        "sub": "user123",
-    }
-
-    # Get private key in PEM format for PyJWT
-    private_key_pem = key_to_use["private_key"].private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-
-    encoded_jwt = jwt.encode(
-        payload, private_key_pem, algorithm="RS256", headers={"kid": key_to_use["kid"]}
-    )
-
-    return encoded_jwt
-
-
-# Generate an initial valid key pair
-generate_key_pair()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    create_app().run(host="0.0.0.0", port=8080)
