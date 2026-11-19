@@ -113,6 +113,11 @@ Argon2id hashes, auth logging, rate limits, and the existing JWT behavior.
 `pyproject.toml` enables line/branch coverage for both modules and enforces a
 minimum of 81%, above the assignment's 80% requirement.
 
+The Project 3 test run on macOS with Python 3.12.7 passed all 30 tests
+with **97.78% combined line and branch coverage**.
+
+![Project 3 pytest results showing 30 tests passed and 97.78% coverage](project3-test-coverage.png)
+
 ## Blackbox client
 
 Download and extract the appropriate binary from the
