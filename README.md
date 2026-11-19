@@ -1,7 +1,7 @@
-# SQLite JWKS & Mock Authentication Server
+# SQLite JWKS and Mock Authentication Server
 
-A Python/Flask server that persists 2048-bit RSA private keys in SQLite and issues
-RS256 JWTs. This implements Project 2 of CSCE 3550.
+A Python/Flask server for CSCE 3550 Project 3. It issues RS256 JWTs, encrypts
+RSA private keys in SQLite, registers users, and logs mock authentication requests.
 
 ## Setup and execution
 
@@ -12,8 +12,14 @@ no separate SQLite server or Python package is needed.
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+export NOT_MY_KEY="$(openssl rand -base64 32)"
 python app.py
 ```
+
+Set `NOT_MY_KEY` to 32 random bytes encoded as standard Base64. Generate this
+value once for a new database, save it in a secret manager, and supply the same
+value on every restart. Keep it out of Git. Startup fails if the key is missing,
+invalid, or unable to decrypt existing keys.
 
 Run from the repository directory. The server listens on port 8080 and creates
 `totally_not_my_privateKeys.db` in the **current working directory**. The blackbox
@@ -32,9 +38,11 @@ CREATE TABLE IF NOT EXISTS keys(
 );
 ```
 
-Private keys are serialized as PKCS1 PEM bytes and stored as BLOBs. Expiration
-is an integer Unix timestamp. Startup ensures there is at least one key expired
-one hour ago and one active key expiring one hour later. Existing keys and IDs
+Private keys are serialized as PKCS1 PEM, then encrypted using AES-256-GCM.
+Each BLOB contains a version marker, a fresh 12-byte nonce, the ciphertext, and
+its authentication tag. Expiration is an integer Unix timestamp. Startup
+ensures there is at least one key expired one hour ago and one active key
+expiring one hour later. Existing keys and IDs
 are retained across restarts; no duplicate seed keys are added when both
 categories already exist. If a category is missing during authentication, a new
 key is saved and then read back from SQLite before signing.
@@ -43,9 +51,9 @@ All query values are passed as bound parameters, without string interpolation.
 Connections are closed explicitly, and writes use transactions. JWT/JWK `kid`
 values are strings containing the integer database ID.
 
-The database contains unencrypted private keys, as required by this assignment.
-It and its SQLite sidecars are excluded from Git. Keep the database file when
-restarting or moving this mock server to preserve its signing keys.
+Startup migrates Project 2 plaintext key rows in a transaction, preserving their
+IDs and expiration times. Any backups taken before migration still contain
+plaintext keys. The database and its SQLite sidecars are excluded from Git.
 
 ## Endpoints
 
@@ -65,8 +73,11 @@ The **presence** of the `expired` query parameter selects an expired key:
 JWTs. Expired keys are excluded from JWKS.
 
 Both HTTP Basic auth and JSON `{ "username": "userABC", "password": "password123" }`
-are accepted. Passwords are ignored: this is mock authentication, not credential
-validation.
+are accepted. The course endpoint continues to issue mock JWTs without checking
+passwords. Successful requests record the connection IP, UTC timestamp, and
+matching registered user ID in `auth_logs`. Unregistered usernames have a
+`NULL` user ID. Each server process accepts up to 10 `POST /auth` requests in any
+one-second window. Excess requests return HTTP 429 with `Retry-After: 1`.
 
 ```bash
 curl -X POST -u userABC:password123 http://localhost:8080/auth
@@ -74,6 +85,18 @@ curl -X POST -H 'Content-Type: application/json' \
   -d '{"username":"userABC","password":"password123"}' http://localhost:8080/auth
 curl -X POST 'http://localhost:8080/auth?expired=true'
 curl http://localhost:8080/.well-known/jwks.json
+```
+
+### `POST /register`
+
+Accepts a JSON object with `username` and `email` and returns HTTP 201 with the
+generated UUIDv4 password. The `users` table stores a salted Argon2id hash.
+Duplicate usernames or emails return HTTP 409. Missing or invalid fields return
+HTTP 400.
+
+```bash
+curl -X POST -H 'Content-Type: application/json' \
+  -d '{"username":"student","email":"student@example.com"}' http://localhost:8080/register
 ```
 
 ## Tests and lint
@@ -84,10 +107,9 @@ ruff check .
 ruff format --check .
 ```
 
-Tests use isolated temporary databases and cover the schema, PEM storage,
-restart persistence, public-JWKS signature verification, expired tokens,
-expiry boundaries, missing-key renewal, multiple published keys, Basic/JSON
-mock authentication, SQL injection input, and unsupported methods.
+Tests use isolated databases and generated test keys. They cover encrypted key
+storage, migration, invalid keys, JWKS signature verification, registration,
+Argon2id hashes, auth logging, rate limits, and the existing JWT behavior.
 `pyproject.toml` enables line/branch coverage for both modules and enforces a
 minimum of 81%, above the assignment's 80% requirement.
 
@@ -95,15 +117,16 @@ minimum of 81%, above the assignment's 80% requirement.
 
 Download and extract the appropriate binary from the
 [official releases](https://github.com/jh125486/CSCE3550/releases).
-Release v1.1.2 spells the command `project-2` (rather than `project2`). From the
-repository directory with the virtual environment active, run:
+From the repository directory with the virtual environment active and
+`NOT_MY_KEY` exported, run the Project 3 checks locally:
 
 ```bash
-/path/to/gradebot project-2 --dir=. --run="python app.py"
+/path/to/gradebot project-3 --server-url= --dir=. --run="python app.py"
 ```
 
-The client starts the server itself; stop any existing server on port 8080 first.
-The generated database stays in this directory so the client can inspect it.
+The client starts the server on port 8080. The database stays in this directory
+so the client can inspect it. Passing an empty `--server-url` disables uploading
+and leaves the remote quality review unscored.
 
 ## Layout
 
@@ -114,7 +137,7 @@ The generated database stays in this directory so the client can inspect it.
 - `pyproject.toml`: pytest, coverage, and lint settings.
 - `screenshot.png`: project grading evidence.
 
-## Test results
+## Project 2 grading history
 
 The run scored **98.93%** and was successfully submitted to the
 grading server. The screenshot includes the results table.
