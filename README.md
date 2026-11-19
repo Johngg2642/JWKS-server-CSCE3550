@@ -133,6 +133,12 @@ The client starts the server on port 8080. The database stays in this directory
 so the client can inspect it. Passing an empty `--server-url` disables uploading
 and leaves the remote quality review unscored.
 
+Gradebot v1.1.2 awarded **90/90 functional points**, including the optional
+rate limiter. The local report displayed **94.74%** overall with the five-point
+remote quality review unscored.
+
+![Project 3 Gradebot results showing all six functional checks passed](project3-gradebot-results.png)
+
 ## Layout
 
 - `app.py`: application factory and HTTP endpoints.
